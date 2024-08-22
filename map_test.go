@@ -26,6 +26,7 @@ const (
 	opSwap             = mapOp("Swap")
 	opCompareAndSwap   = mapOp("CompareAndSwap")
 	opCompareAndDelete = mapOp("CompareAndDelete")
+	opClear            = mapOp("Clear")
 )
 
 var mapOps = [...]mapOp{
@@ -37,11 +38,12 @@ var mapOps = [...]mapOp{
 	opSwap,
 	opCompareAndSwap,
 	opCompareAndDelete,
+	opClear,
 }
 
 type mapCall struct {
-	op      mapOp
-	k, v, n string
+	op   mapOp
+	k, v string
 }
 type mapInterfaceStrStr mapInterface[string, string]
 
@@ -74,6 +76,9 @@ func (c mapCall) apply(m mapInterfaceStrStr) (string, bool) {
 			}
 		}
 		return "", false
+	case opClear:
+		m.Clear()
+		return "", false
 	default:
 		panic("invalid mapOp")
 	}
@@ -82,6 +87,14 @@ func (c mapCall) apply(m mapInterfaceStrStr) (string, bool) {
 type mapResult struct {
 	value any
 	ok    bool
+}
+
+func randValue(r *rand.Rand) string {
+	b := make([]byte, r.Intn(4))
+	for i := range b {
+		b[i] = 'a' + byte(rand.Intn(26))
+	}
+	return string(b)
 }
 
 func (mapCall) Generate(r *rand.Rand, _ int) reflect.Value {
@@ -109,14 +122,6 @@ func applyCalls(m mapInterfaceStrStr, calls []mapCall) (results []mapResult, fin
 	return results, final
 }
 
-func randValue(r *rand.Rand) string {
-	b := make([]byte, r.Intn(4))
-	for i := range b {
-		b[i] = 'a' + byte(rand.Intn(26))
-	}
-	return string(b)
-}
-
 func applyMap(calls []mapCall) ([]mapResult, map[any]any) {
 	sm := &SyncMap[string, string]{}
 	return applyCalls(sm, calls)
@@ -126,7 +131,7 @@ func applyRWMutexMap(calls []mapCall) ([]mapResult, map[any]any) {
 	return applyCalls(new(RWMutexMap[string, string]), calls)
 }
 
-func applyMidMutexMap(calls []mapCall) ([]mapResult, map[any]any) {
+func applySmartMutexMap(calls []mapCall) ([]mapResult, map[any]any) {
 	return applyCalls(new(SmartMutexMap[string, string]), calls)
 }
 
@@ -144,8 +149,8 @@ func TestMapMatchesRWMutex(t *testing.T) {
 	}
 }
 
-func TestMapMatchesMidMutex(t *testing.T) {
-	if err := quick.CheckEqual(applyMidMutexMap, applyRWMutexMap, &quick.Config{MaxCount: 10000}); err != nil {
+func TestMapMatchesSmartMutex(t *testing.T) {
+	if err := quick.CheckEqual(applySmartMutexMap, applyRWMutexMap, &quick.Config{MaxCount: 10000}); err != nil {
 		t.Error(err)
 	}
 }
@@ -282,5 +287,63 @@ func TestMapRangeNoAllocations(t *testing.T) { // Issue 62404
 	})
 	if allocs > 0 {
 		t.Errorf("AllocsPerRun of m.Range = %v; want 0", allocs)
+	}
+}
+
+// TestConcurrentClear tests concurrent behavior of sync.Map properties to ensure no data races.
+// Checks for proper synchronization between Clear, Store, Load operations.
+func TestConcurrentClear(t *testing.T) {
+	var m SyncMap[int, int]
+
+	wg := sync.WaitGroup{}
+	wg.Add(30) // 10 goroutines for writing, 10 goroutines for reading, 10 goroutines for waiting
+
+	// Writing data to the map concurrently
+	for i := 0; i < 10; i++ {
+		go func(k, v int) {
+			defer wg.Done()
+			m.Store(k, v)
+		}(i, i*10)
+	}
+
+	// Reading data from the map concurrently
+	for i := 0; i < 10; i++ {
+		go func(k int) {
+			defer wg.Done()
+			if value, ok := m.Load(k); ok {
+				t.Logf("Key: %v, Value: %v\n", k, value)
+			} else {
+				t.Logf("Key: %v not found\n", k)
+			}
+		}(i)
+	}
+
+	// Clearing data from the map concurrently
+	for i := 0; i < 10; i++ {
+		go func() {
+			defer wg.Done()
+			m.Clear()
+		}()
+	}
+
+	wg.Wait()
+
+	m.Clear()
+
+	m.Range(func(k, v int) bool {
+		t.Errorf("after Clear, Map contains (%v, %v); expected to be empty", k, v)
+
+		return true
+	})
+}
+
+func TestMapClearNoAllocations(t *testing.T) {
+	//testenv.SkipIfOptimizationOff(t)
+	var m sync.Map
+	allocs := testing.AllocsPerRun(10, func() {
+		m.Clear()
+	})
+	if allocs > 0 {
+		t.Errorf("AllocsPerRun of m.Clear = %v; want 0", allocs)
 	}
 }

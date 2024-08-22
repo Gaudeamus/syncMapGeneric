@@ -23,6 +23,7 @@ type mapInterfaceAny interface {
 	CompareAndSwap(key, old, new any) (swapped bool)
 	CompareAndDelete(key, old any) (deleted bool)
 	Range(func(key, value any) (shouldContinue bool))
+	Clear()
 }
 
 // mapInterface is the generic interface Map implements.
@@ -36,6 +37,7 @@ type mapInterface[K comparable, V any] interface {
 	CompareAndSwap(key K, old, new V) (swapped bool)
 	CompareAndDelete(key K, old V) (deleted bool)
 	Range(func(key K, value V) (shouldContinue bool))
+	Clear()
 }
 
 var (
@@ -69,6 +71,10 @@ func (m *SyncMapClassic[K, V]) Load(s K) (value V, ok bool) {
 
 func (m *SyncMapClassic[K, V]) Store(key K, value V) {
 	m.base.Store(key, value)
+}
+
+func (m *SyncMapClassic[K, V]) Clear() {
+	m.base.Clear()
 }
 
 func (m *SyncMapClassic[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
@@ -156,6 +162,10 @@ func (m *SmartMutexMap[K, V]) Store(key K, value V) {
 	m.base.Store(key, value)
 }
 
+func (m *SmartMutexMap[K, V]) Clear() {
+	m.base.Clear()
+}
+
 func (m *SmartMutexMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
 	vi, loaded := m.base.LoadOrStore(key, value)
 	if vi != nil {
@@ -213,6 +223,12 @@ func (m *smartMutexMap) Store(key, value any) {
 		m.dirty = make(map[any]any)
 	}
 	m.dirty[key] = value
+	m.mu.Unlock()
+}
+
+func (m *smartMutexMap) Clear() {
+	m.mu.Lock()
+	clear(m.dirty)
 	m.mu.Unlock()
 }
 
@@ -328,6 +344,10 @@ func (m *RWMutexMap[K, V]) Store(key K, value V) {
 	m.base.Store(key, value)
 }
 
+func (m *RWMutexMap[K, V]) Clear() {
+	m.base.Clear()
+}
+
 func (m *RWMutexMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
 	vi, loaded := m.base.LoadOrStore(key, value)
 	if vi != nil {
@@ -386,6 +406,12 @@ func (m *rwMutexMap) Store(key, value any) {
 	}
 	m.dirty[key] = value
 	m.mu.Unlock()
+}
+
+func (m *rwMutexMap) Clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.dirty)
 }
 
 func (m *rwMutexMap) LoadOrStore(key, value any) (actual any, loaded bool) {
@@ -507,6 +533,10 @@ func (m *DeepCopyMap[K, V]) Store(key K, value V) {
 	m.base.Store(key, value)
 }
 
+func (m *DeepCopyMap[K, V]) Clear() {
+	m.base.Clear()
+}
+
 func (m *DeepCopyMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
 	vi, loaded := m.base.LoadOrStore(key, value)
 	if vi != nil {
@@ -563,6 +593,13 @@ func (m *deepCopyMap) Store(key, value any) {
 	dirty[key] = value
 	m.clean.Store(dirty)
 	m.mu.Unlock()
+}
+
+func (m *deepCopyMap) Clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.clean.Store((map[any]any)(nil))
 }
 
 func (m *deepCopyMap) LoadOrStore(key, value any) (actual any, loaded bool) {
