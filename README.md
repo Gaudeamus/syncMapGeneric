@@ -2,7 +2,7 @@
 
 It's a proposal based on original sync.Map implementation with the generic approach.
 
-Benchmarks blow show significant improvement in comparison with classic sync.Map with underlying map[any]any storage
+Benchmarks below show significant improvement in comparison with classic sync.Map with underlying map[any]any storage
 
 None: code comments inside syncmap.go are left from original sync package, just for reference  
 ## Benchmark with different map implementations
